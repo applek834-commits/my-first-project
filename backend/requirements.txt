@@ -1,0 +1,19 @@
+# Backend dependencies. Install from the project root:
+#   pip install -r backend/requirements.txt
+#
+# faiss-cpu is the notebook's IndexFlatIP. If the wheel is unavailable on your
+# platform, delete that one line: rag_engine.py automatically falls back to an
+# exact NumPy cosine search, so everything still works.
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+python-dotenv>=1.0.1
+groq>=0.9.0
+httpx>=0.27.0
+
+numpy>=1.26.0
+torch>=2.2.0
+transformers>=4.40.0
+scikit-learn>=1.4.0
+faiss-cpu>=1.9.0

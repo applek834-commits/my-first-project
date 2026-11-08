@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Chat with your course notes using a grounded RAG system built with FastAPI, FAISS and Groq."
+    />
+    <meta name="theme-color" content="#f5f6fb" />
+    <title>RAG Course Assistant</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a flash.
+      try {
+        var t = localStorage.getItem('rag-theme') || 'light';
+        document.documentElement.dataset.theme = t;
+        document.querySelector('meta[name="theme-color"]').content =
+          t === 'dark' ? '#0c1020' : '#f5f6fb';
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

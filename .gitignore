@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+
+# Secrets — never commit your real key
+.env
+.env.*
+!.env.example
+
+# Generated index cache (rebuilt automatically on first run)
+backend/storage/*
+!backend/storage/.gitkeep
+*.index
+*.npy
+
+# Editor / OS / notebook
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# Local QA / preview screenshots
+preview_*.png
+_preview_*.png
+
+# WorkBuddy workspace internals
+.workbuddy-ai/
