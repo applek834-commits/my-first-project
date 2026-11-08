@@ -11,7 +11,9 @@ async function request(path, options = {}) {
     })
   } catch {
     throw new Error(
-      'Cannot reach the backend. Start FastAPI with: uvicorn backend.main:app --reload --port 8000',
+      BASE === '/api'
+        ? 'Cannot reach the backend. Start FastAPI with: uvicorn backend.main:app --reload --port 8000'
+        : `Cannot reach the backend at ${BASE}. Check the URL, that the service is running, and ALLOWED_ORIGINS on the backend.`,
     )
   }
 
@@ -21,6 +23,16 @@ async function request(path, options = {}) {
     data = raw ? JSON.parse(raw) : null
   } catch {
     data = null
+  }
+
+  // A static host returns index.html for unknown paths. Give a useful hint
+  // instead of dumping HTML into the error banner.
+  if (!response.ok && data === null && raw) {
+    throw new Error(
+      BASE === '/api'
+        ? `No API at /api (HTTP ${response.status}). Set VITE_API_BASE_URL to your deployed FastAPI backend, then rebuild.`
+        : `HTTP ${response.status} from ${BASE} was not JSON. Is this the FastAPI backend URL (ending in /api)?`,
+    )
   }
 
   if (!response.ok) {

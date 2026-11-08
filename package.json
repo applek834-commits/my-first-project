@@ -1,0 +1,11 @@
+{
+  "name": "rag-course-assistant",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Frontend build wrapper; the Python FastAPI backend is deployed separately.",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview"
+  }
+}

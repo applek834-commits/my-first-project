@@ -105,6 +105,18 @@ Open <http://localhost:5173>.
 > `backend/requirements.txt`. The engine automatically falls back to an exact
 > NumPy cosine search — same results, just no on-disk FAISS index.
 
+## Deploying
+
+`vercel.json` at the repo root lets Vercel build the React app from `frontend/`.
+**Vercel can only host the frontend**: the FastAPI service needs `torch`,
+`transformers`, FAISS, ~90 MB of model weights and a persistent index cache,
+which is outside a serverless function's budget. Host the backend separately
+(Render, Railway, Fly.io or Hugging Face Spaces) using the root `Dockerfile`,
+then set `VITE_API_BASE_URL` on Vercel and `ALLOWED_ORIGINS` on the backend.
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the full step-by-step guide and a
+troubleshooting table.
+
 ## API
 
 | Method | Path | Purpose |
