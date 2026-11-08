@@ -26,9 +26,10 @@ backend/storage/*
 .DS_Store
 Thumbs.db
 
-# Local QA / preview screenshots
+# Local QA / preview screenshots (the ones in docs/ ARE committed)
 preview_*.png
 _preview_*.png
+!docs/screenshots/*.png
 
 # WorkBuddy workspace internals
 .workbuddy-ai/

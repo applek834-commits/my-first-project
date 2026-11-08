@@ -15,6 +15,20 @@ FastAPI (:8000) ──► RAGEngine ──► FAISS IndexFlatIP + TF-IDF hybrid
         └──────────► Groq chat.completions (free model)
 ```
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/welcome-light.png" alt="Light theme welcome screen" width="49%">
+  <img src="docs/screenshots/welcome-dark.png" alt="Dark theme welcome screen" width="49%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/answer-with-sources.png" alt="Grounded answer with retrieval score bars" width="49%">
+  <img src="docs/screenshots/sidebar-drawer.png" alt="Responsive sidebar drawer" width="49%">
+</p>
+
+Light and dark welcome screens, a grounded answer with its retrieved sources,
+and the responsive sidebar drawer on a narrow window.
+
 ## What came from the notebook
 
 | Notebook step | Where it lives now |
