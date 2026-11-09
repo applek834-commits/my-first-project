@@ -177,6 +177,81 @@ def main() -> None:
     check("out-of-corpus question abstains", data["low_confidence"] is True)
     check("abstain skips Groq", data["model"] is None and "I do not know" in data["answer"])
 
+    print("\n--- extra_docs (My notes) ---")
+    # A note containing a unique term that doesn't appear in the corpus should
+    # surface in the results when the question matches.
+    extra = [
+        {
+            "source": "my-custom-note.txt",
+            "text": (
+                "The F1 score is the harmonic mean of precision and recall. "
+                "It combines both metrics into a single number that balances "
+                "false positives and false negatives. The formula is "
+                "F1 = 2 * (precision * recall) / (precision + recall)."
+            ),
+        }
+    ]
+    status, data = rag.handle(
+        "search", "POST", {},
+        {"question": "What is the F1 score?", "k": 5, "mode": "hybrid", "extra_docs": extra},
+    )
+    check("search with extra_docs 200", status == 200)
+    check("returns 5 sources", len(data["sources"]) == 5)
+    extra_sources = [s for s in data["sources"] if "my-custom-note" in s["source"]]
+    check("user note appears in results", len(extra_sources) > 0)
+    if extra_sources:
+        check(
+            "user note is highly ranked",
+            extra_sources[0]["rank"] <= 3,
+            f"rank={extra_sources[0]['rank']}",
+        )
+
+    # Without extra_docs, the same question should not return the custom note.
+    status, data = rag.handle(
+        "search", "POST", {},
+        {"question": "What is the F1 score?", "k": 5, "mode": "hybrid"},
+    )
+    no_extra = [s for s in data["sources"] if "my-custom-note" in s["source"]]
+    check("custom note absent without extra_docs", len(no_extra) == 0)
+
+    # Validation: too many docs
+    try:
+        rag.handle("search", "POST", {}, {
+            "question": "test",
+            "extra_docs": [{"source": f"f{i}.txt", "text": "x"} for i in range(11)],
+        })
+        raise AssertionError("should reject >10 extra docs")
+    except rag.ApiError as exc:
+        check("rejects >10 extra docs -> 400", exc.status == 400)
+
+    # Validation: empty text
+    try:
+        rag.handle("search", "POST", {}, {
+            "question": "test",
+            "extra_docs": [{"source": "f.txt", "text": "  "}],
+        })
+        raise AssertionError("should reject empty text")
+    except rag.ApiError as exc:
+        check("rejects empty text -> 400", exc.status == 400)
+
+    # Validation: oversized doc
+    try:
+        rag.handle("search", "POST", {}, {
+            "question": "test",
+            "extra_docs": [{"source": "f.txt", "text": "x" * 50001}],
+        })
+        raise AssertionError("should reject oversized doc")
+    except rag.ApiError as exc:
+        check("rejects oversized doc -> 400", exc.status == 400)
+
+    # No _extra key leaked into response
+    status, data = rag.handle(
+        "ask", "POST", {},
+        {"question": "What is precision?", "use_llm": False, "extra_docs": extra},
+    )
+    check("no _extra key in response sources",
+          all("_extra" not in s for s in data["sources"]))
+
     status, data = rag.handle("reindex", "POST", {}, {})
     check("POST /api/reindex 202", status == 202 and data["accepted"] is True)
 

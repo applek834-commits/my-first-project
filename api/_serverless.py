@@ -37,7 +37,13 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from _index_data import PAYLOAD  # noqa: E402
-from _text import SYSTEM_PROMPT, build_prompt, tokenize  # noqa: E402
+from _text import (  # noqa: E402
+    SYSTEM_PROMPT,
+    build_prompt,
+    merge_fragments,
+    recursive_chunk,
+    tokenize,
+)
 
 MODES = ("hybrid", "semantic", "keyword")
 INDEX_BACKEND = "precomputed TF-IDF + BM25"
@@ -46,6 +52,13 @@ EMBEDDING_MODEL = "TF-IDF (precomputed, no neural embeddings)"
 BM25_K1 = 1.5
 BM25_B = 0.75
 MODEL_CACHE_TTL = 300.0
+
+# Limits for user-supplied documents (the "My notes" feature). Vercel
+# function payloads are capped at 4.5 MB by the platform; we stay well under
+# that while still allowing several substantial text files.
+MAX_EXTRA_DOCS = 10
+MAX_EXTRA_DOC_CHARS = 50_000
+MAX_EXTRA_TOTAL_CHARS = 200_000
 
 
 def _int_env(name: str, default: int) -> int:
@@ -103,7 +116,123 @@ def index() -> dict:
     return _INDEX
 
 
-def retrieve(question: str, k: int = 5, mode: str = "hybrid") -> tuple[list[dict], float]:
+def _validate_extra_docs(raw):
+    """Validate and normalise the extra_docs field from the request body.
+
+    Returns a list of (source, text) tuples, or raises ApiError.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ApiError(400, "extra_docs must be a list of objects.")
+    if len(raw) > MAX_EXTRA_DOCS:
+        raise ApiError(400, f"extra_docs may contain at most {MAX_EXTRA_DOCS} documents.")
+    total = 0
+    docs = []
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ApiError(400, f"extra_docs[{i}] must be an object.")
+        text = entry.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ApiError(400, f"extra_docs[{i}].text must be a non-empty string.")
+        if len(text) > MAX_EXTRA_DOC_CHARS:
+            raise ApiError(
+                400,
+                f"extra_docs[{i}].text exceeds the {MAX_EXTRA_DOC_CHARS:,}-character limit.",
+            )
+        total += len(text)
+        if total > MAX_EXTRA_TOTAL_CHARS:
+            raise ApiError(
+                400,
+                f"extra_docs total exceeds the {MAX_EXTRA_TOTAL_CHARS:,}-character limit.",
+            )
+        source = entry.get("source")
+        if not isinstance(source, str) or not source.strip():
+            source = f"my-notes-{i + 1}"
+        docs.append((source.strip()[:120], text))
+    return docs
+
+
+def _score_extra_docs(question, extra_docs, k):
+    """Chunk and TF-IDF-score user-supplied docs at request time.
+
+    Returns a list of hit dicts with the same shape as baked-index hits,
+    plus their raw TF-IDF cosine score. These are merged with the baked
+    index hits so a user's own notes can outrank (or be outranked by)
+    the course corpus.
+    """
+    if not extra_docs:
+        return []
+
+    # Build a mini TF-IDF index over only the user's chunks, using the same
+    # sublinear-tf formula as the baked index. idf is computed from this
+    # small collection, which is fine — we just need relative ranking.
+    chunks = []
+    sources = []
+    for source, text in extra_docs:
+        pieces = merge_fragments(recursive_chunk(text))
+        for piece in pieces:
+            chunks.append(piece)
+            sources.append(source)
+    if not chunks:
+        return []
+
+    n = len(chunks)
+    doc_tokens = [tokenize(c) for c in chunks]
+    df = Counter()
+    for tokens in doc_tokens:
+        for term in set(tokens):
+            df[term] += 1
+    idf = {term: math.log(1.0 + n / (df_t + 1)) for term, df_t in df.items()}
+
+    # Document weights and norms
+    doc_weights = []
+    doc_norms = []
+    for tokens in doc_tokens:
+        counts = Counter(tokens)
+        weights = {t: (1.0 + math.log(tf)) * idf.get(t, 0.0) for t, tf in counts.items()}
+        norm = math.sqrt(sum(w * w for w in weights.values())) or 1.0
+        doc_weights.append(weights)
+        doc_norms.append(norm)
+
+    # Query weights
+    q_counts = Counter(tokenize(question))
+    q_weights = {t: (1.0 + math.log(tf)) * idf.get(t, 0.0) for t, tf in q_counts.items()}
+    q_norm = math.sqrt(sum(w * w for w in q_weights.values())) or 1.0
+
+    scores = []
+    for i, weights in enumerate(doc_weights):
+        dot = sum(w * weights.get(t, 0.0) for t, w in q_weights.items())
+        cos = dot / (q_norm * doc_norms[i]) if doc_norms[i] > 0 else 0.0
+        if cos > 0:
+            scores.append((i, cos))
+
+    scores.sort(key=lambda x: x[1], reverse=True)
+    scores = scores[:k]
+
+    max_score = max((s for _, s in scores), default=0.0) or 1.0
+    hits = []
+    for rank, (i, score) in enumerate(scores, start=1):
+        hits.append(
+            {
+                "rank": rank,
+                "score": round(score / max_score, 4),
+                "source": sources[i],
+                "chunk": chunks[i],
+                "semantic_score": round(score, 4),
+                "keyword_score": round(score / max_score, 4),
+                "_extra": True,
+            }
+        )
+    return hits
+
+
+def retrieve(
+    question: str,
+    k: int = 5,
+    mode: str = "hybrid",
+    extra_docs: list = None,
+) -> tuple[list[dict], float]:
     """Return (source dicts, calibrated confidence) using TF-IDF + BM25.
 
     A single rare word can score highly on cosine alone even for a nonsense
@@ -111,6 +240,11 @@ def retrieve(question: str, k: int = 5, mode: str = "hybrid") -> tuple[list[dict
     of the query's TF-IDF mass made up of terms that actually exist in the
     corpus. That keeps "What is precision?" high while "Who won the 2022
     football world cup?" correctly abstains.
+
+    If ``extra_docs`` is provided (a list of (source, text) tuples), those
+    documents are chunked and TF-IDF-scored at request time, then merged
+    with the baked index hits so the user's own notes participate in
+    retrieval alongside the course corpus.
     """
     idx = index()
     n = idx["n"]
@@ -186,6 +320,33 @@ def retrieve(question: str, k: int = 5, mode: str = "hybrid") -> tuple[list[dict
         }
         for rank, (i, _) in enumerate(ranked, start=1)
     ]
+
+    # Merge user-supplied notes, if any. Both sets are normalised to [0, 1]
+    # before merging so neither dominates simply because its raw scale is
+    # higher. The top k by combined score wins.
+    if extra_docs:
+        extra_hits = _score_extra_docs(question, extra_docs, k)
+        if extra_hits:
+            # Normalise baked-index scores to [0, 1] so the two sets are
+            # comparable. The baked index's top hit defines the scale.
+            baked_max = max((h["score"] for h in hits), default=0.0) or 1.0
+            for h in hits:
+                h["_norm"] = h["score"] / baked_max
+            for h in extra_hits:
+                h["_norm"] = h["score"]  # already 0-1 from _score_extra_docs
+            merged = hits + extra_hits
+            merged.sort(key=lambda h: h["_norm"], reverse=True)
+            merged = merged[:k]
+            for rank, h in enumerate(merged, start=1):
+                h["rank"] = rank
+                h.pop("_norm", None)
+            hits = merged
+            # Extra docs can raise confidence — use the best extra score if
+            # it beats the baked coverage-weighted score.
+            extra_top = max((h["semantic_score"] for h in extra_hits), default=0.0)
+            if extra_top > top_semantic * coverage:
+                return hits, round(extra_top, 4)
+
     return hits, round(top_semantic * coverage, 4)
 
 
@@ -313,7 +474,7 @@ def generate(prompt: str, model: str | None) -> tuple[str, dict | None]:
 # ---------------------------------------------------------------------------
 # Request validation + route handlers
 # ---------------------------------------------------------------------------
-def _query_payload(body: dict) -> tuple[str, int, str]:
+def _query_payload(body: dict) -> tuple[str, int, str, list]:
     question = body.get("question")
     if not isinstance(question, str) or not (1 <= len(question.strip()) <= 2000):
         raise ApiError(400, "question must be a non-empty string of at most 2000 characters.")
@@ -326,7 +487,8 @@ def _query_payload(body: dict) -> tuple[str, int, str]:
     mode = body.get("mode", "hybrid")
     if mode not in MODES:
         raise ApiError(400, f"mode must be one of {', '.join(MODES)}.")
-    return question.strip(), k, mode
+    extra_docs = _validate_extra_docs(body.get("extra_docs"))
+    return question.strip(), k, mode, extra_docs
 
 
 def handle(route: str, method: str, query: dict, body: dict) -> tuple[int, dict]:
@@ -382,6 +544,8 @@ def handle(route: str, method: str, query: dict, body: dict) -> tuple[int, dict]
                 "chunk_size": 300,
                 "chunk_overlap": 50,
                 "max_tokens": MAX_TOKENS,
+                "max_extra_docs": MAX_EXTRA_DOCS,
+                "max_extra_doc_chars": MAX_EXTRA_DOC_CHARS,
             },
             "runtime": "vercel-serverless",
         }
@@ -412,10 +576,14 @@ def handle(route: str, method: str, query: dict, body: dict) -> tuple[int, dict]
             ),
         }
 
-    question, k, mode = _query_payload(body)
+    question, k, mode, extra_docs = _query_payload(body)
     started = time.perf_counter()
-    hits, top_score = retrieve(question, k=k, mode=mode)
+    hits, top_score = retrieve(question, k=k, mode=mode, extra_docs=extra_docs)
     elapsed = round((time.perf_counter() - started) * 1000)
+
+    # Strip internal keys from extra-docs hits before serialising.
+    for h in hits:
+        h.pop("_extra", None)
 
     if route == "search":
         return 200, {
@@ -501,7 +669,7 @@ def make_handler(route: str):
                 length = 0
             if length <= 0:
                 return {}
-            if length > 64 * 1024:
+            if length > 256 * 1024:
                 raise ApiError(413, "Request body is too large.")
             raw = self.rfile.read(length)
             try:

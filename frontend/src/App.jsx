@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Message from './components/Message'
+import MyNotes, { loadMyNotes, saveMyNotes, notesToExtraDocs } from './components/MyNotes'
 import Pipeline from './components/Pipeline'
 import Sidebar from './components/Sidebar'
 import {
@@ -43,6 +44,7 @@ export default function App() {
   const [reindexing, setReindexing] = useState(false)
   const [banner, setBanner] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [myNotes, setMyNotes] = useState(() => loadMyNotes())
   const inputRef = useRef(null)
 
   // Theme lives on <html> so CSS variables can be swapped globally.
@@ -167,6 +169,7 @@ export default function App() {
         mode: controls.mode,
         use_llm: controls.useLlm,
         model: controls.model || undefined,
+        extra_docs: myNotes.length ? notesToExtraDocs(myNotes) : undefined,
       }
 
       try {
@@ -266,6 +269,8 @@ export default function App() {
           refreshingModels={refreshingModels}
           theme={theme}
           setTheme={setTheme}
+          myNotes={myNotes}
+          setMyNotes={setMyNotes}
         />
       </div>
 

@@ -150,7 +150,7 @@ After editing `ragg/`, regenerate and commit the index:
 
 ```bash
 python scripts/build_serverless_index.py
-python scripts/test_serverless.py       # 34 offline checks, no server needed
+python scripts/test_serverless.py       # 55 offline checks, no server needed
 python scripts/calibrate_serverless.py  # check the abstain threshold
 git add api/_index_data.py ragg/ && git commit -m "Refresh serverless index" && git push
 ```
@@ -189,6 +189,17 @@ on the `runtime` field in `/api/status`. Set `use_llm: false` for retrieval-only
 debugging. Pass an optional `model` to override `GROQ_MODEL` for a single
 request — that is how the UI's model picker works, with no restart needed.
 
+Pass `extra_docs` (a list of `{source, text}` objects) to include your own
+documents in retrieval alongside the baked corpus. User-supplied chunks are
+scored with the same TF-IDF/MiniLM strategy and merged with corpus hits, so a
+matching note can surface in the top-k sources. Max 10 docs, 50 KB each:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What is the F1 score?","extra_docs":[{"source":"my-note.txt","text":"F1 = 2 * (precision * recall) / (precision + recall)"}]}'
+```
+
 ## Controls in the UI
 
 - **Pipeline diagram** — the five RAG stages on the welcome screen, with a pulse
@@ -208,6 +219,13 @@ request — that is how the UI's model picker works, with no restart needed.
   chunk text, and a one-click copy button.
 - **Search mode / top-k** — change retrieval live, no restart.
 - **Generate an answer** — off = retrieval only, useful when you have no key.
+- **My notes** — add your own `.txt`/`.md` files or paste text directly in the
+  sidebar. Notes are stored in `localStorage` (per-browser) and sent with each
+  question as `extra_docs`, so they're chunked and scored alongside the baked
+  corpus at request time. A user note that matches the question can outrank
+  corpus passages and appear in the sources list. Up to 10 documents,
+  50 KB each, 200 KB total. Works on Vercel immediately — no storage, no
+  credentials, no redeploy.
 - **Rebuild index** — re-chunk and re-embed after editing the corpus. Adding or
   editing a `.txt` file invalidates the cache automatically via a content hash.
 - **Shortcuts** — `Enter` send, `Shift+Enter` newline, `⌘/Ctrl+K` focus the box,
@@ -274,7 +292,7 @@ anywhere by the app.
 | --- | --- |
 | `backend/` | local FastAPI service: MiniLM + FAISS + Groq |
 | `api/` | Vercel Python functions; each route defines a top-level `class handler` so Vercel detects it, `_`-prefixed files are shared helpers |
-| `scripts/` | offline index builder, calibration and 46 endpoint/entrypoint checks |
+| `scripts/` | offline index builder, calibration and 55 endpoint/entrypoint checks |
 | `ragg/` | the 14 `.txt` course notes (the notebook's corpus) |
 | `frontend/` | React + Vite UI |
 | `vercel.json` | Vite build settings only — no `functions` block to trip `unused_function` |

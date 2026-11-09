@@ -14,6 +14,7 @@ import {
   IconTrash,
   IconZap,
 } from './Icons'
+import MyNotes from './MyNotes'
 
 const MODES = [
   { id: 'hybrid', label: 'Hybrid', hint: 'FAISS + TF-IDF · best for exact numbers' },
@@ -44,6 +45,8 @@ export default function Sidebar({
   refreshingModels,
   theme,
   setTheme,
+  myNotes,
+  setMyNotes,
 }) {
   const [showFiles, setShowFiles] = useState(false)
   const patch = (change) => setControls((prev) => ({ ...prev, ...change }))
@@ -258,6 +261,8 @@ export default function Sidebar({
           <IconCpu size={11} /> {status?.embedding_model || 'all-MiniLM-L6-v2'}
         </p>
       </div>
+
+      <MyNotes notes={myNotes} setMyNotes={setMyNotes} />
 
       <div className="panel appearance-panel">
         <h2 className="panel-title">Appearance</h2>

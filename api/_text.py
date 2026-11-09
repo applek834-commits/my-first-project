@@ -69,6 +69,34 @@ def recursive_chunk(
     return out
 
 
+MIN_CHUNK_CHARS = 100
+
+
+def merge_fragments(chunks: list[str], min_chars: int = MIN_CHUNK_CHARS) -> list[str]:
+    """Fold sub-100-char trailing fragments into the next passage.
+
+    The notebook's overlap sometimes leaves a fragment like "### Average
+    Precision (AP) and mAP". Those tiny chunks dominate L2-normalised TF-IDF
+    scores without containing an answer, so both the offline index builder and
+    live user-supplied documents go through this same cleanup.
+    """
+    merged: list[str] = []
+    carry = ""
+    for chunk in chunks:
+        piece = f"{carry} {chunk}".strip() if carry else chunk
+        if len(piece) < min_chars:
+            carry = piece
+            continue
+        merged.append(piece)
+        carry = ""
+    if carry:
+        if merged:
+            merged[-1] = f"{merged[-1]} {carry}".strip()
+        else:
+            merged.append(carry)
+    return merged
+
+
 def load_corpus(corpus_dir: Path) -> dict[str, str]:
     """Read every non-empty .txt file, keyed by filename (notebook Step 0b)."""
     if not corpus_dir.is_dir():

@@ -135,7 +135,7 @@ and committed. After editing anything in `ragg/`:
 ```bash
 python scripts/build_serverless_index.py     # rewrites api/_index_data.py
 python scripts/calibrate_serverless.py      # optional: re-check MIN_SCORE
-python scripts/test_serverless.py           # optional: 34 offline checks
+python scripts/test_serverless.py           # optional: 55 offline checks
 git add api/_index_data.py ragg/
 git commit -m "Refresh serverless index" && git push
 ```
@@ -146,6 +146,16 @@ library — no virtualenv, no GPU, no model download.
 `api/_index_data.py` is a single Python module holding a zlib-compressed,
 base64-encoded JSON blob. Embedding the data in a `.py` module (rather than a
 `.json` file) guarantees Vercel's Python bundler ships it with every function.
+
+### Adding your own notes from the app
+
+The sidebar includes a **My notes** panel where you can add `.txt`/`.md` files
+or paste text directly. Notes are stored in `localStorage` (per-browser) and
+sent with each question as the `extra_docs` field in the `/api/ask` and
+`/api/search` request body. The serverless function chunks and TF-IDF-scores
+them alongside the baked corpus at request time, so a matching note can
+surface in the top-k sources. No storage, credentials, or redeploy required.
+Limits: 10 documents, 50 KB each, 200 KB total.
 
 ---
 

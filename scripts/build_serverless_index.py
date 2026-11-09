@@ -26,32 +26,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "api"))
 
-from _text import load_corpus, recursive_chunk, tokenize  # noqa: E402
+from _text import (  # noqa: E402
+    load_corpus,
+    merge_fragments,
+    recursive_chunk,
+    tokenize,
+)
 
 CHUNK_SIZE = 300
 CHUNK_OVERLAP = 50
-# The notebook's overlap occasionally leaves a trailing fragment ("### Average
-# Precision (AP) and mAP"). Those tiny chunks dominate L2-normalised TF-IDF
-# scores without containing an answer, so fold them into the next passage.
-MIN_CHUNK_CHARS = 100
-
-
-def merge_fragments(chunks: list[str], min_chars: int = MIN_CHUNK_CHARS) -> list[str]:
-    merged: list[str] = []
-    carry = ""
-    for chunk in chunks:
-        piece = f"{carry} {chunk}".strip() if carry else chunk
-        if len(piece) < min_chars:
-            carry = piece
-            continue
-        merged.append(piece)
-        carry = ""
-    if carry:
-        if merged:
-            merged[-1] = f"{merged[-1]} {carry}".strip()
-        else:
-            merged.append(carry)
-    return merged
 
 
 def corpus_signature(corpus_dir: Path) -> str:

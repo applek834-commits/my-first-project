@@ -110,10 +110,16 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
+class ExtraDoc(BaseModel):
+    source: str = Field(default="", max_length=120)
+    text: str = Field(..., min_length=1, max_length=50000)
+
+
 class QueryBase(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     k: int = Field(default=settings.default_k, ge=1, le=settings.max_k)
     mode: Literal["hybrid", "semantic", "keyword"] = "hybrid"
+    extra_docs: list[ExtraDoc] = Field(default_factory=list, max_length=10)
 
 
 class AskRequest(QueryBase):
@@ -368,7 +374,8 @@ def models(refresh: bool = False) -> dict:
 def ask(payload: AskRequest) -> AskResponse:
     engine = _require_ready()
     started = time.perf_counter()
-    result = engine.retrieve(payload.question, k=payload.k, mode=payload.mode)
+    extra = [(d.source or f"my-notes-{i+1}", d.text) for i, d in enumerate(payload.extra_docs)]
+    result = engine.retrieve(payload.question, k=payload.k, mode=payload.mode, extra_docs=extra)
     sources = _sources(result)
 
     # Notebook Step "Test honestly": a low top score means the corpus likely
@@ -417,7 +424,8 @@ def search(payload: SearchRequest) -> SearchResponse:
     """Retrieval debugging endpoint — works without a Groq API key."""
     engine = _require_ready()
     started = time.perf_counter()
-    result = engine.retrieve(payload.question, k=payload.k, mode=payload.mode)
+    extra = [(d.source or f"my-notes-{i+1}", d.text) for i, d in enumerate(payload.extra_docs)]
+    result = engine.retrieve(payload.question, k=payload.k, mode=payload.mode, extra_docs=extra)
     return SearchResponse(
         question=payload.question,
         sources=_sources(result),

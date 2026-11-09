@@ -364,7 +364,11 @@ class RAGEngine:
 
     # -- Step 4a + Step 8 -------------------------------------------------
     def retrieve(
-        self, question: str, k: int = 5, mode: RetrievalMode = "hybrid"
+        self,
+        question: str,
+        k: int = 5,
+        mode: RetrievalMode = "hybrid",
+        extra_docs: list = None,
     ) -> RetrievalResult:
         total = len(self.chunks)
         if total == 0:
@@ -421,12 +425,82 @@ class RAGEngine:
             )
             for rank, (idx, _) in enumerate(ranked, start=1)
         ]
+
+        # Merge user-supplied notes, if any. The notes are chunked and
+        # embedded with the same MiniLM model, then their cosine scores are
+        # normalised and merged with the corpus hits so a user's own notes
+        # can participate in retrieval.
+        top_extra = 0.0
+        if extra_docs:
+            extra_hits, top_extra = self._retrieve_extra(question, extra_docs, k)
+            if extra_hits:
+                baked_max = max((h.score for h in hits), default=0.0) or 1.0
+                all_hits = [
+                    {"rank": 0, "score": h.score / baked_max, "source": h.source,
+                     "chunk": h.chunk, "semantic_score": h.semantic_score,
+                     "keyword_score": h.keyword_score}
+                    for h in hits
+                ] + [
+                    {"rank": 0, "score": h.score, "source": h.source,
+                     "chunk": h.chunk, "semantic_score": h.semantic_score,
+                     "keyword_score": h.keyword_score}
+                    for h in extra_hits
+                ]
+                all_hits.sort(key=lambda h: h["score"], reverse=True)
+                all_hits = all_hits[:k]
+                hits = [
+                    Hit(
+                        rank=rank,
+                        score=round(h["score"], 4),
+                        source=h["source"],
+                        chunk=h["chunk"],
+                        semantic_score=round(h["semantic_score"], 4),
+                        keyword_score=round(h["keyword_score"], 4),
+                    )
+                    for rank, h in enumerate(all_hits, start=1)
+                ]
+
+        final_top = max(top_semantic, top_extra)
         return RetrievalResult(
             hits=hits,
             mode=mode,
             k=k,
-            top_semantic_score=round(top_semantic, 4),
+            top_semantic_score=round(final_top, 4),
         )
+
+    def _retrieve_extra(self, question, extra_docs, k):
+        """Embed and search user-supplied documents at request time."""
+        chunks = []
+        sources = []
+        for source, text in extra_docs:
+            for piece in recursive_chunk(text, self.settings.chunk_size, self.settings.chunk_overlap):
+                chunks.append(piece)
+                sources.append(source)
+        if not chunks:
+            return [], 0.0
+
+        vectors = l2_normalize(self.embedder.embed(chunks))
+        query = l2_normalize(self.embedder.embed([question]))
+        # NumPy cosine via dot product (vectors are already L2-normalised)
+        sims = vectors @ query[0]
+        top_ids = np.argsort(sims)[::-1][:k]
+        top_extra = float(sims[top_ids[0]]) if len(top_ids) > 0 else 0.0
+
+        hits = []
+        max_sim = max(float(s) for s in sims) or 1.0
+        for rank, idx in enumerate(top_ids, start=1):
+            sim = float(sims[idx])
+            if sim <= 0:
+                continue
+            hits.append(Hit(
+                rank=rank,
+                score=round(sim / max_sim, 4),
+                source=sources[idx],
+                chunk=chunks[idx],
+                semantic_score=round(sim, 4),
+                keyword_score=round(sim / max_sim, 4),
+            ))
+        return hits, top_extra
 
     # -- Step 5: augmented, grounded prompt ------------------------------
     def build_prompt(self, question: str, hits: list[Hit]) -> str:
