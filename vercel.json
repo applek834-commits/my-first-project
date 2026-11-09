@@ -3,5 +3,10 @@
   "framework": "vite",
   "installCommand": "npm --prefix frontend ci",
   "buildCommand": "npm --prefix frontend run build",
-  "outputDirectory": "frontend/dist"
+  "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/**/*.py": {
+      "excludeFiles": "{frontend/**,backend/**,ragg/**,docs/**,scripts/**,notebookaa73a1c9b8.ipynb,Dockerfile,.dockerignore,DEPLOYMENT.md,README.md,.env.example,package.json,package-lock.json,**/*.png}"
+    }
+  }
 }

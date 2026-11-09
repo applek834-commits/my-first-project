@@ -2,132 +2,161 @@
 
 ## Short answer
 
-Yes — a **`vercel.json`** at the repo root is the missing file. But one important
-caveat: **Vercel can host only the React frontend of this project.** Vercel does
-support Python/FastAPI serverless functions in general, but this backend cannot
-run inside one:
-
-- `torch` + `transformers` + `faiss-cpu` are far larger than a deployed
-  function's bundle limit;
-- it loads ~90 MB of MiniLM weights and builds a 1,355-chunk FAISS index in
-  memory on startup, which needs more RAM and time than a function invocation
-  allows;
-- the index cache needs a writable, persistent disk.
-
-So this app deploys as **two services**:
+**One Vercel project now hosts the whole app.** The React frontend is a static
+Vite build, and the backend runs as Vercel Python Functions in the root `api/`
+directory. There is no second server, no Docker host, no CORS configuration and
+no `VITE_API_BASE_URL` to set. The only thing Vercel needs from you is the
+`GROQ_API_KEY` environment variable.
 
 ```
-Browser ──► Vercel (static React build)
-                │  VITE_API_BASE_URL
-                ▼
-        FastAPI backend on a Python/container host
-        (Render · Railway · Fly.io · Hugging Face Spaces)
+Browser ──► https://YOUR-PROJECT.vercel.app
+              ├── /*          static React build (frontend/dist)
+              └── /api/*      Python serverless functions (api/*.py)
+                                 ├── precomputed index (api/_index_data.py)
+                                 └── Groq chat completions (HTTPS)
 ```
 
-## Why the Vercel import failed
+The `vercel.json` at the repo root supplies the framework, install command,
+build command and output directory. Vercel additionally maps every `.py` file
+in `api/` to a route (`api/ask.py` → `/api/ask`). Files beginning with `_`
+(`_serverless.py`, `_text.py`, `_index_data.py`) are helper modules, not routes.
 
-The repo root had no `package.json` and no `vercel.json`. The only manifest was
-`frontend/package.json`, so Vercel could not detect a framework, a build command
-or an output directory. The new root `vercel.json` supplies all three, and a thin
-root `package.json` is included as a fallback for build systems that expect one.
+> **Why the earlier guidance changed:** the original FastAPI backend needs
+> `torch`, `transformers`, `faiss-cpu`, ~90 MB of MiniLM weights and a writable
+> index cache. That cannot fit a serverless function. Instead of hosting it
+> elsewhere, there is now a second, API-compatible backend written with the
+> Python standard library only and a **precomputed** retrieval index.
 
 ---
 
-## 1 · Frontend on Vercel
+## 1 · Deploy to Vercel
 
-1. In Vercel, **Add New… → Project → Import** this GitHub repo.
-2. **Root Directory:** leave it at the repo root (`./`). `vercel.json` handles
-   the `frontend/` subdirectory.
-   - *Alternative:* set Root Directory to `frontend` instead; Vercel then
-     auto-detects Vite (`npm run build` → `dist`) and ignores `vercel.json`.
-     Either approach works — pick one, not both.
-3. **Environment Variables** — add **before** the first build:
+1. **Add New… → Project → Import** this GitHub repository.
+2. **Root Directory:** leave at `./` (the repo root). `vercel.json` handles the
+   `frontend/` subdirectory.
+3. **Framework / Build settings:** leave them alone — everything is pinned in
+   `vercel.json`:
 
-   | Name | Value |
+   | Setting | Value |
    | --- | --- |
-   | `VITE_API_BASE_URL` | `https://YOUR-BACKEND-HOST/api` |
+   | Framework Preset | Vite |
+   | Install Command | `npm --prefix frontend ci` |
+   | Build Command | `npm --prefix frontend run build` |
+   | Output Directory | `frontend/dist` |
 
-   Must include the `/api` suffix and use **HTTPS**, or browsers will block it
-   as mixed content. Vite inlines `VITE_*` values at **build time**, so you must
-   **redeploy** after changing this value.
+4. **Environment Variables** — add before the first deploy:
 
-4. Click **Deploy**. The build runs
-   `npm --prefix frontend ci` → `npm --prefix frontend run build` and publishes
-   `frontend/dist`.
+   | Name | Value | Required |
+   | --- | --- | --- |
+   | `GROQ_API_KEY` | your free key from <https://console.groq.com/keys> | **Yes**, for generated answers |
+   | `GROQ_MODEL` | `openai/gpt-oss-20b` | No (this is the default) |
+   | `MAX_TOKENS` | `800` | No (default; keep ≤1000 on the free tier) |
+   | `MIN_SCORE` | `0.12` | No (serverless abstain threshold) |
+   | `TEMPERATURE` | `0.2` | No (default) |
 
-> Deploying before the backend exists is fine: the UI builds and renders, but
-> shows a "Backend offline" banner and a disabled composer. That is expected,
-> not a broken build.
+   **Do NOT set `VITE_API_BASE_URL`.** It must stay empty so the browser calls
+   the same-origin `/api` functions. Setting it to a placeholder is the most
+   common cause of a broken deploy.
 
----
+5. Click **Deploy**.
 
-## 2 · Backend on a Python host
-
-The root **`Dockerfile`** builds the API. Use a host with **at least 2 GB RAM** —
-the 512 MB free tiers will be killed during the embedding/index build.
-
-Good options:
-
-| Host | Notes |
-| --- | --- |
-| Hugging Face Spaces (Docker SDK) | Free CPU tier has enough RAM; already suited to ML images. Set `PORT=7860`. |
-| Render / Railway / Fly.io | Use the `Dockerfile`; choose a Starter plan or bigger. |
-
-Set these environment variables on the backend host (never commit them):
-
-| Name | Value |
-| --- | --- |
-| `GROQ_API_KEY` | your free Groq key |
-| `GROQ_MODEL` | `openai/gpt-oss-20b` |
-| `MAX_TOKENS` | `800` |
-| `ALLOWED_ORIGINS` | `https://YOUR-PROJECT.vercel.app` (exact origin, no trailing slash) |
-| `PORT` | the port your host expects (defaults to `8000`; HF Spaces uses `7860`) |
-
-`ALLOWED_ORIGINS` defaults to `http://localhost:5173,http://127.0.0.1:5173`, so
-**a deployed frontend will get CORS errors until you add its Vercel origin**.
-Comma-separate multiple origins, e.g. localhost plus your production domain.
-
-Notes:
-
-- Health check path: `GET /api/health`.
-- The first boot downloads/loads MiniLM and builds the index — allow a few
-  minutes; poll `GET /api/status` until it reports `ready`.
-- Container filesystems are ephemeral, so the index rebuilds after every
-  restart. Mount a persistent volume at `/app/backend/storage` (set
-  `STORAGE_DIR` accordingly) to skip repeat builds.
-- If `faiss-cpu` has no wheel for your platform, remove it from
-  `backend/requirements.txt`; `VectorIndex` falls back to exact NumPy cosine
-  search automatically.
+> Without `GROQ_API_KEY` the site still builds and renders: retrieval and
+> `/api/search` work, but generated answers return a clear "key is not set"
+> message. Turn off **Generate an answer** in the sidebar to use the app with
+> no key at all.
 
 ---
 
-## 3 · Verify
+## 2 · Verify
 
 ```bash
-curl https://YOUR-BACKEND-HOST/api/health
-curl https://YOUR-BACKEND-HOST/api/status
+curl https://YOUR-PROJECT.vercel.app/api/health
+curl https://YOUR-PROJECT.vercel.app/api/status
+curl https://YOUR-PROJECT.vercel.app/api/documents
+curl -X POST https://YOUR-PROJECT.vercel.app/api/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What is precision?","k":5,"mode":"hybrid"}'
 ```
 
-Then open the Vercel URL. The topbar should show **Ready**, the sidebar should
-list 14 documents / 1,355 chunks, and "What is precision?" should return a
-grounded answer with source cards.
+`/api/status` should report `status: "ready"`, 14 documents, ~1,277 chunks and
+`runtime: "vercel-serverless"` — with no warm-up delay, because the index is
+already baked in. In the UI the topbar shows **Ready** immediately and the
+sidebar footer reads *Vercel serverless · TF-IDF + BM25 · Groq*.
 
 ---
 
-## 4 · Alternative: proxy instead of CORS
+## 3 · What is different from the local FastAPI backend
 
-If you'd rather keep the browser on a single origin, leave
-`VITE_API_BASE_URL` empty and add a rewrite to `vercel.json`, replacing the
-placeholder with your real backend URL:
+Both backends answer the exact same REST contract, so the React app is
+unchanged. Only the retrieval internals differ.
 
-```json
-"rewrites": [
-  { "source": "/api/:path*", "destination": "https://YOUR-BACKEND-HOST/api/:path*" }
-]
+| | Local (`backend/`) | Vercel (`api/`) |
+| --- | --- | --- |
+| Runtime | Uvicorn + FastAPI | Python 3.12 serverless, stdlib only |
+| Dependencies | torch, transformers, faiss-cpu, scikit-learn, groq | none (no `requirements.txt`) |
+| Embeddings | `all-MiniLM-L6-v2`, 384-d, downloaded on first boot | none — TF-IDF weights precomputed |
+| Index | FAISS `IndexFlatIP`, built in RAM, cached on disk | inverted index in `api/_index_data.py` (≈294 KiB) |
+| Retrieval | MiniLM cosine + TF-IDF | sublinear TF-IDF cosine + BM25 + query-coverage confidence |
+| Chunks | 1,355 | 1,277 (sub-100-char fragments merged) |
+| Abstain threshold | `MIN_SCORE=0.4` (cosine) | `MIN_SCORE=0.12` (calibrated, see below) |
+| Cold start | minutes for the first index build | milliseconds to decode the blob |
+| `/api/reindex` | rebuilds FAISS in the background | returns build instructions (read-only FS) |
+
+The serverless confidence score multiplies the best TF-IDF cosine by the share
+of the query's vocabulary that exists in the corpus. That prevents a single
+rare out-of-corpus word from looking like a confident match. Measured with
+`scripts/calibrate_serverless.py`: in-corpus example questions score
+**0.39–0.55**, out-of-corpus ones **0.00–0.07**, so `0.12` sits in the gap.
+
+The trade-off is honest: this is **sparse lexical retrieval, not neural
+semantic search**. It handles exact terms, numbers and near-morphological
+variants well, but it will not match a synonym the corpus never uses. For the
+full MiniLM + FAISS experience, run the local backend (section 5).
+
+---
+
+## 4 · Changing the corpus
+
+The Vercel filesystem is read-only, so the index is generated on your machine
+and committed. After editing anything in `ragg/`:
+
+```bash
+python scripts/build_serverless_index.py     # rewrites api/_index_data.py
+python scripts/calibrate_serverless.py      # optional: re-check MIN_SCORE
+python scripts/test_serverless.py           # optional: 34 offline checks
+git add api/_index_data.py ragg/
+git commit -m "Refresh serverless index" && git push
 ```
 
-Vercel then forwards `/api/*` to FastAPI, so no `ALLOWED_ORIGINS` change is
-needed. This URL is static config, so it must be edited in the repo and pushed.
+Vercel redeploys automatically on the push. `scripts/` needs only the standard
+library — no virtualenv, no GPU, no model download.
+
+`api/_index_data.py` is a single Python module holding a zlib-compressed,
+base64-encoded JSON blob. Embedding the data in a `.py` module (rather than a
+`.json` file) guarantees Vercel's Python bundler ships it with every function.
+
+---
+
+## 5 · Local development (full MiniLM + FAISS)
+
+Nothing about local development changed:
+
+```bash
+cp .env.example .env          # paste your Groq key
+pip install -r backend/requirements.txt
+uvicorn backend.main:app --reload --port 8000
+# second terminal
+cd frontend && npm install && npm run dev
+```
+
+Vite proxies `/api` to port 8000. The UI detects the local backend from
+`/api/status` and labels the pipeline *MiniLM · 384d / FAISS + TF-IDF*.
+
+The root `Dockerfile` is still available if you ever want to host that full
+FastAPI service separately (Render, Railway, Fly.io, HF Spaces). In that case
+set `VITE_API_BASE_URL=https://YOUR-HOST/api` at build time and add the Vercel
+origin to `ALLOWED_ORIGINS` on the container. This is optional — not needed
+for the normal Vercel deployment.
 
 ---
 
@@ -135,11 +164,14 @@ needed. This URL is static config, so it must be edited in the repo and pushed.
 
 | Symptom | Fix |
 | --- | --- |
-| "No framework detected" / "Missing build script" | Use repo root with `vercel.json`, **or** set Root Directory = `frontend`. |
-| Build succeeds but `/api/status` 404s | `VITE_API_BASE_URL` was empty or set after the build. Set it and redeploy. |
-| "No API at /api …" banner | Same as above — the static host is returning `index.html` for `/api/*`. |
-| CORS error in the console | Add the exact Vercel origin to `ALLOWED_ORIGINS` on the backend and restart it. |
-| Mixed-content / blocked request | Backend must be HTTPS. |
-| Backend container exits or is OOM-killed | Needs ≥2 GB RAM; move off the 512 MB free tier. |
-| Status stuck on "Indexing" | First index build takes minutes; read the backend logs. |
-| `model_not_found` from Groq | Query `GET /openai/v1/models` and set `GROQ_MODEL` to a currently active ID. |
+| `/api/status` returns 404 or HTML | The `api/` functions were not built. Keep Root Directory = `./` (not `frontend/`), and do not set `VITE_API_BASE_URL`. Check the Vercel **Functions** tab. |
+| "No framework detected" | Import from the repo root; `vercel.json` + root `package.json` supply the Vite preset. |
+| "No JSON API at /api …" banner | Same as the 404 above — a stale `VITE_API_BASE_URL` build variable also causes it. Remove it and redeploy. |
+| `GROQ_API_KEY is not set` | Add it in **Project Settings → Environment Variables**, then redeploy (env changes do not apply to old deployments). |
+| Status shows "Indexing" forever | Not possible in serverless mode; if you see it, the browser is hitting the local FastAPI backend. Clear `VITE_API_BASE_URL`. |
+| `model_not_found` / 404 from Groq | The model ID was retired. Open `GET /api/models` or the sidebar model picker and choose an active one, or set `GROQ_MODEL`. |
+| 429 "output tokens per minute" | Lower `MAX_TOKENS` to ~600, or pick a model with a higher free-tier cap. |
+| "I do not know" on a reasonable question | Raise **Top-k**, switch to `hybrid`, or lower `MIN_SCORE`. The serverless index is lexical, so rephrase using words from the notes. |
+| CORS error | Should not happen on Vercel (single origin, `Access-Control-Allow-Origin: *`). If using a separate backend, add the Vercel origin to `ALLOWED_ORIGINS`. |
+| Function bundle too large | `vercel.json` already excludes `frontend/**`, `backend/**`, `ragg/**`, `docs/**` and `scripts/**` from the Python bundles via `excludeFiles`. |
+| Chunk count differs from the README | Expected: local FAISS = 1,355, serverless = 1,277 after fragment merging. |

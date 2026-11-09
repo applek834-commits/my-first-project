@@ -67,6 +67,12 @@ export default function App() {
         setBanner((prev) =>
           prev && prev.startsWith('Backend offline') ? null : prev,
         )
+        // The serverless index is baked in, so status is always "ready".
+        // Stop polling instead of generating ~900 function calls per hour
+        // for a value that can never change during a deployment.
+        if (next.runtime === 'vercel-serverless' && next.status === 'ready') {
+          return
+        }
       } catch (err) {
         if (active) setBanner(`Backend offline — ${err.message}`)
       }
@@ -205,7 +211,13 @@ export default function App() {
     setBanner(null)
     try {
       await reindex()
-      setBanner('Index rebuild started. This can take a minute on first run.')
+      setBanner(
+        serverless
+          ? 'This deployment uses a precomputed index — see DEPLOYMENT.md to rebuild it from ragg/.'
+          : 'Index rebuild started. This can take a minute on first run.',
+      )
+      // In serverless mode status never changes, so clear the spinner here too.
+      if (serverless) setReindexing(false)
     } catch (err) {
       setBanner(err.message)
       setReindexing(false)
@@ -220,6 +232,9 @@ export default function App() {
   }
 
   const activeModel = controls.model || status?.groq_model || 'Groq'
+  // /api/status reports which backend is answering. The Vercel build uses a
+  // precomputed index, so the UI labels itself accordingly.
+  const serverless = status?.runtime === 'vercel-serverless'
 
   return (
     <div className="app">
@@ -242,6 +257,7 @@ export default function App() {
             send(question)
           }}
           reindexing={reindexing}
+          serverless={serverless}
           exampleQuestions={EXAMPLES}
           onClose={() => setSidebarOpen(false)}
           models={models}
@@ -323,7 +339,11 @@ export default function App() {
                   <span>THE PIPELINE</span>
                   <span className="wp-head-right">5 stages · ~2 s</span>
                 </div>
-                <Pipeline active={busy} docs={status?.documents || 14} />
+                <Pipeline
+                  active={busy}
+                  docs={status?.documents || 14}
+                  serverless={serverless}
+                />
                 <div className="wp-foot">
                   <IconArrow size={13} /> From a raw <code>.txt</code> file to a
                   cited answer

@@ -1,5 +1,6 @@
-// Thin client for the FastAPI backend. In dev, Vite proxies /api -> :8000.
-// Set VITE_API_BASE_URL to point at a deployed backend instead.
+// Thin client for the RAG API. In dev, Vite proxies /api -> :8000 (FastAPI).
+// On Vercel the same-origin /api routes are Python serverless functions.
+// Set VITE_API_BASE_URL only if you host a separate backend instead.
 const BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
 async function request(path, options = {}) {
@@ -12,7 +13,7 @@ async function request(path, options = {}) {
   } catch {
     throw new Error(
       BASE === '/api'
-        ? 'Cannot reach the backend. Start FastAPI with: uvicorn backend.main:app --reload --port 8000'
+        ? 'Cannot reach /api. Locally, start FastAPI with: uvicorn backend.main:app --reload --port 8000. On Vercel, check that the Python functions in api/ were deployed.'
         : `Cannot reach the backend at ${BASE}. Check the URL, that the service is running, and ALLOWED_ORIGINS on the backend.`,
     )
   }
@@ -30,8 +31,8 @@ async function request(path, options = {}) {
   if (!response.ok && data === null && raw) {
     throw new Error(
       BASE === '/api'
-        ? `No API at /api (HTTP ${response.status}). Set VITE_API_BASE_URL to your deployed FastAPI backend, then rebuild.`
-        : `HTTP ${response.status} from ${BASE} was not JSON. Is this the FastAPI backend URL (ending in /api)?`,
+        ? `No JSON API at /api (HTTP ${response.status}). On Vercel, confirm the Python functions in api/ were built; for a separate backend, set VITE_API_BASE_URL and rebuild.`
+        : `HTTP ${response.status} from ${BASE} was not JSON. Is this the backend URL (ending in /api)?`,
     )
   }
 

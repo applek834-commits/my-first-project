@@ -21,6 +21,12 @@ const MODES = [
   { id: 'keyword', label: 'Keyword', hint: 'TF-IDF exact-word matching only' },
 ]
 
+const SERVERLESS_HINTS = {
+  hybrid: 'TF-IDF cosine + BM25 · best all-rounder',
+  semantic: 'TF-IDF cosine similarity only',
+  keyword: 'BM25 exact-word matching only',
+}
+
 export default function Sidebar({
   status,
   controls,
@@ -29,6 +35,7 @@ export default function Sidebar({
   onClear,
   onExample,
   reindexing,
+  serverless = false,
   exampleQuestions,
   onClose,
   models,
@@ -125,7 +132,9 @@ export default function Sidebar({
           ))}
         </div>
         <p className="field-hint">
-          {MODES.find((m) => m.id === controls.mode)?.hint}
+          {serverless
+            ? SERVERLESS_HINTS[controls.mode]
+            : MODES.find((m) => m.id === controls.mode)?.hint}
         </p>
 
         <div className="field-row">
@@ -278,12 +287,16 @@ export default function Sidebar({
           disabled={reindexing}
         >
           <IconRefresh size={15} className={reindexing ? 'spin' : ''} />
-          {reindexing ? 'Rebuilding…' : 'Rebuild index'}
+          {reindexing ? 'Rebuilding…' : serverless ? 'Index build info' : 'Rebuild index'}
         </button>
         <button type="button" className="ghost-btn" onClick={onClear}>
           <IconTrash size={15} /> Clear chat
         </button>
-        <p className="footer-model">FastAPI · FAISS · Groq free tier</p>
+        <p className="footer-model">
+          {serverless
+            ? 'Vercel serverless · TF-IDF + BM25 · Groq'
+            : 'FastAPI · FAISS · Groq free tier'}
+        </p>
       </div>
     </aside>
   )

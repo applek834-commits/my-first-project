@@ -3,6 +3,8 @@
 .workbuddy-ai/
 frontend/
 docs/
+api/
+scripts/
 node_modules/
 **/node_modules/
 **/__pycache__/
