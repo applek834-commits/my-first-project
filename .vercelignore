@@ -1,0 +1,23 @@
+# Keep the deployment source (and therefore every Python function bundle)
+# small. The serverless index is already baked into api/_index_data.py, so the
+# corpus, local FastAPI backend, scripts and docs are not needed on Vercel.
+# This replaces a `functions.excludeFiles` rule, which Vercel validates against
+# detected functions and can fail a build with `unused_function`.
+.git
+.workbuddy-ai/
+backend/
+docs/
+scripts/
+ragg/
+*.ipynb
+*.png
+*.index
+*.npy
+.env
+.env.*
+!.env.example
+frontend/node_modules/
+frontend/dist/
+**/__pycache__/
+**/*.pyc
+.vercel

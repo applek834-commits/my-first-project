@@ -16,4 +16,8 @@ for _path in _paths:
 
 from _serverless import make_handler  # noqa: E402
 
-handler = make_handler("reindex")
+_Base = make_handler("reindex")
+
+
+class handler(_Base):
+    """Vercel requires a real top-level `handler` class, not an assignment."""

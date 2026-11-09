@@ -8,6 +8,7 @@ wiring is caught before deploying. Groq is never contacted.
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import socket
@@ -72,8 +73,49 @@ def http_probe(route_file: str, method: str, path: str, body: dict | None = None
     return head.decode("iso-8859-1"), json.loads(raw_body or b"{}")
 
 
+def is_vercel_entrypoint(path: Path) -> bool:
+    """Replica of Vercel's `ast_parser.contains_app_or_handler` (vercel#14493).
+
+    Vercel only builds a Python function when a file in api/ statically
+    exports a top-level `app` or a top-level `class handler`. If this returns
+    False for a route, Vercel silently skips it and the deploy fails with
+    `unused_function`.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "app" for t in node.targets
+        ):
+            return True
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "app":
+                return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "app":
+            return True
+        if isinstance(node, ast.ImportFrom) and any(
+            (a.asname or a.name) == "app" for a in node.names
+        ):
+            return True
+        if isinstance(node, ast.ClassDef) and node.name.lower() == "handler":
+            return True
+    return False
+
+
 def main() -> None:
-    print("--- route dispatcher ---")
+    print("--- Vercel Python entrypoint detection ---")
+    routes = sorted(p for p in API.glob("*.py") if not p.name.startswith("_"))
+    helpers = sorted(API.glob("*.py"))
+    check("8 route files present", len(routes) == 8, str(len(routes)))
+    for path in routes:
+        check(f"{path.name} is a Vercel entrypoint", is_vercel_entrypoint(path))
+    for path in helpers:
+        if path.name.startswith("_"):
+            check(
+                f"{path.name} stays a helper (no stray function)",
+                not is_vercel_entrypoint(path),
+            )
+
+    print("\n--- route dispatcher ---")
     status, data = rag.handle("status", "GET", {}, {})
     check("GET /api/status 200", status == 200)
     check("status is ready", data["status"] == "ready")

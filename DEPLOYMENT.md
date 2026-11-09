@@ -21,6 +21,18 @@ build command and output directory. Vercel additionally maps every `.py` file
 in `api/` to a route (`api/ask.py` → `/api/ask`). Files beginning with `_`
 (`_serverless.py`, `_text.py`, `_index_data.py`) are helper modules, not routes.
 
+> **Important — why every route file contains `class handler(...)`.**
+> Vercel only creates a Python function when it can **statically** see a
+> top-level `app` or a top-level `class handler` in the file
+> ([vercel/vercel#14493](https://github.com/vercel/vercel/pull/14493)). A
+> dynamic `handler = make_handler("ask")` assignment is classified as a helper
+> module and silently skipped; then a `functions` rule in `vercel.json` fails
+> the whole build with `unused_function`. Each route therefore defines a real
+> `class handler` that subclasses the generated handler. `scripts/test_serverless.py`
+> replicates Vercel's AST check so this cannot regress. There is deliberately
+> **no `functions` block** in `vercel.json` — `.vercelignore` keeps the function
+> bundles small instead, without any pattern that Vercel has to validate.
+
 > **Why the earlier guidance changed:** the original FastAPI backend needs
 > `torch`, `transformers`, `faiss-cpu`, ~90 MB of MiniLM weights and a writable
 > index cache. That cannot fit a serverless function. Instead of hosting it
@@ -173,5 +185,6 @@ for the normal Vercel deployment.
 | 429 "output tokens per minute" | Lower `MAX_TOKENS` to ~600, or pick a model with a higher free-tier cap. |
 | "I do not know" on a reasonable question | Raise **Top-k**, switch to `hybrid`, or lower `MIN_SCORE`. The serverless index is lexical, so rephrase using words from the notes. |
 | CORS error | Should not happen on Vercel (single origin, `Access-Control-Allow-Origin: *`). If using a separate backend, add the Vercel origin to `ALLOWED_ORIGINS`. |
-| Function bundle too large | `vercel.json` already excludes `frontend/**`, `backend/**`, `ragg/**`, `docs/**` and `scripts/**` from the Python bundles via `excludeFiles`. |
+| `Error: [unused_function] The pattern … doesn't match any Serverless Functions` | Vercel created **zero** Python functions. Almost always because an `api/*.py` file has no top-level `class handler` / `app` (see the note above). Fix the class, or remove the `functions` block entirely — this repo no longer has one. |
+| Function bundle too large | `.vercelignore` excludes `backend/`, `ragg/`, `docs/`, `scripts/`, the notebook, images and `frontend/node_modules/` from the deployment source. Add more patterns there if needed. |
 | Chunk count differs from the README | Expected: local FAISS = 1,355, serverless = 1,277 after fragment merging. |

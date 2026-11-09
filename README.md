@@ -273,9 +273,10 @@ anywhere by the app.
 | Path | Role |
 | --- | --- |
 | `backend/` | local FastAPI service: MiniLM + FAISS + Groq |
-| `api/` | Vercel Python functions; `_`-prefixed files are shared helpers |
-| `scripts/` | offline index builder, calibration and endpoint tests |
+| `api/` | Vercel Python functions; each route defines a top-level `class handler` so Vercel detects it, `_`-prefixed files are shared helpers |
+| `scripts/` | offline index builder, calibration and 46 endpoint/entrypoint checks |
 | `ragg/` | the 14 `.txt` course notes (the notebook's corpus) |
 | `frontend/` | React + Vite UI |
-| `vercel.json` | Vite build settings + Python function bundle exclusions |
+| `vercel.json` | Vite build settings only — no `functions` block to trip `unused_function` |
+| `.vercelignore` | keeps `backend/`, `ragg/`, `docs/`, `scripts/` and other bulk out of the deployment |
 | `Dockerfile` | optional separate host for the full FastAPI backend |
